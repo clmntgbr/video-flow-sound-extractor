@@ -12,7 +12,7 @@ from src.s3_client import S3Client
 from src.rabbitmq_client import RabbitMQClient
 from src.file_client import FileClient
 from src.converter import ProtobufConverter
-from src.Protobuf.Message_pb2 import ApiToSoundExtractor
+from src.Protobuf.Message_pb2 import ApiToSoundExtractor, MediaPodStatus
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -75,13 +75,13 @@ def process_message(message):
 
         apiToSoundExtractor.mediaPod.originalVideo.length = int(duration)
         apiToSoundExtractor.mediaPod.originalVideo.audios.extend(resultsSorted)
-        apiToSoundExtractor.mediaPod.status = 'sound_extractor_complete'
+        apiToSoundExtractor.mediaPod.status = MediaPodStatus.Name(MediaPodStatus.SOUND_EXTRACTOR_COMPLETE)
         
         rmq_client.send_message(apiToSoundExtractor, "App\\Protobuf\\SoundExtractorToApi")
 
         return True
     except Exception as e:
-        apiToSoundExtractor.mediaPod.status = 'sound_extractor_error'
+        apiToSoundExtractor.mediaPod.status = MediaPodStatus.Name(MediaPodStatus.SOUND_EXTRACTOR_ERROR)
         if not rmq_client.send_message(apiToSoundExtractor, "App\\Protobuf\\SoundExtractorToApi"):
             return False
 
