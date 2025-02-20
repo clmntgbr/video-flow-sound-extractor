@@ -39,11 +39,11 @@ celery.conf.update({
 
 @celery.task(name='tasks.process_message', queue=app.config['RMQ_QUEUE_READ'])
 def process_message(message):
-    apiToSoundExtractor: ApiToSoundExtractor = ProtobufConverter.json_to_protobuf(message)
+    protobuf: ApiToSoundExtractor = ProtobufConverter.json_to_protobuf(message)
 
     try:
-        key = f"{apiToSoundExtractor.mediaPod.userUuid}/{apiToSoundExtractor.mediaPod.uuid}/{apiToSoundExtractor.mediaPod.originalVideo.name}"
-        tmpFilePath = f"/tmp/{apiToSoundExtractor.mediaPod.originalVideo.name}"
+        key = f"{protobuf.mediaPod.userUuid}/{protobuf.mediaPod.uuid}/{protobuf.mediaPod.originalVideo.name}"
+        tmpFilePath = f"/tmp/{protobuf.mediaPod.originalVideo.name}"
         uuid = os.path.splitext(os.path.basename(tmpFilePath))[0]
 
         if not s3_client.download_file(key, tmpFilePath):
@@ -63,7 +63,7 @@ def process_message(message):
         chunks = chunk_wav(audioFilePath, uuid)
 
         for chunk in chunks:
-            key = f"{apiToSoundExtractor.mediaPod.userUuid}/{apiToSoundExtractor.mediaPod.uuid}/audios/{chunk}"
+            key = f"{protobuf.mediaPod.userUuid}/{protobuf.mediaPod.uuid}/audios/{chunk}"
             if not s3_client.upload_file(f"/tmp/{chunk}", key):
                 return False
             file_client.delete_file(f"/tmp/{chunk}")
@@ -73,16 +73,16 @@ def process_message(message):
 
         resultsSorted = sorted(chunks, key=extract_chunk_number)
 
-        apiToSoundExtractor.mediaPod.originalVideo.length = int(duration)
-        apiToSoundExtractor.mediaPod.originalVideo.audios.extend(resultsSorted)
-        apiToSoundExtractor.mediaPod.status = MediaPodStatus.Name(MediaPodStatus.SOUND_EXTRACTOR_COMPLETE)
+        protobuf.mediaPod.originalVideo.length = int(duration)
+        protobuf.mediaPod.originalVideo.audios.extend(resultsSorted)
+        protobuf.mediaPod.status = MediaPodStatus.Name(MediaPodStatus.SOUND_EXTRACTOR_COMPLETE)
         
-        rmq_client.send_message(apiToSoundExtractor, "App\\Protobuf\\SoundExtractorToApi")
+        rmq_client.send_message(protobuf, "App\\Protobuf\\SoundExtractorToApi")
 
         return True
     except Exception as e:
-        apiToSoundExtractor.mediaPod.status = MediaPodStatus.Name(MediaPodStatus.SOUND_EXTRACTOR_ERROR)
-        if not rmq_client.send_message(apiToSoundExtractor, "App\\Protobuf\\SoundExtractorToApi"):
+        protobuf.mediaPod.status = MediaPodStatus.Name(MediaPodStatus.SOUND_EXTRACTOR_ERROR)
+        if not rmq_client.send_message(protobuf, "App\\Protobuf\\SoundExtractorToApi"):
             return False
 
 def extract_sound(file: str, audioFilePath: str) -> bool:
