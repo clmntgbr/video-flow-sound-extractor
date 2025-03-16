@@ -47,14 +47,18 @@ def process_message(message):
     protobuf.IsInitialized()
 
     try:
+        id = os.path.splitext(protobuf.mediaPod.originalVideo.name)[0]
+        type = os.path.splitext(protobuf.mediaPod.originalVideo.name)[1]
+
         key = f"{protobuf.mediaPod.userUuid}/{protobuf.mediaPod.uuid}/{protobuf.mediaPod.originalVideo.name}"
+        keyFrame = f"{protobuf.mediaPod.userUuid}/{protobuf.mediaPod.uuid}/{id}.jpg"
         tmpFilePath = f"/tmp/{protobuf.mediaPod.originalVideo.name}"
-        uuid = os.path.splitext(os.path.basename(tmpFilePath))[0]
+        tmpFramePath = f"/tmp/{id}.jpg"
 
         if not s3_client.download_file(key, tmpFilePath):
             return False
 
-        audioFilePath = uuid + ".mp3"
+        audioFilePath = id + ".mp3"
         tmpAudioFilePath = f"/tmp/{audioFilePath}"
 
         probe = ffmpeg.probe(tmpFilePath)
@@ -63,9 +67,12 @@ def process_message(message):
         if not extract_sound(tmpFilePath, tmpAudioFilePath):
             return False
 
+        if not extract_frame(tmpFilePath, tmpFramePath, duration):
+            return False
+
         audioFilePath = convert_to_wav(tmpAudioFilePath)
 
-        chunks = chunk_wav(audioFilePath, uuid)
+        chunks = chunk_wav(audioFilePath, id)
 
         for chunk in chunks:
             key = (
@@ -75,11 +82,16 @@ def process_message(message):
                 return False
             file_client.delete_file(f"/tmp/{chunk}")
 
+        if not s3_client.upload_file(tmpFramePath, keyFrame):
+            return False
+        
         file_client.delete_file(tmpAudioFilePath)
         file_client.delete_file(tmpFilePath)
+        file_client.delete_file(tmpFramePath)
 
         resultsSorted = sorted(chunks, key=extract_chunk_number)
 
+        protobuf.mediaPod.frame = f"{id}.jpg"
         protobuf.mediaPod.originalVideo.length = int(duration)
         protobuf.mediaPod.originalVideo.audios.extend(resultsSorted)
         protobuf.mediaPod.status = MediaPodStatus.Name(
@@ -107,15 +119,25 @@ def extract_sound(file: str, audioFilePath: str) -> bool:
     return False
 
 
+def extract_frame(file: str, tmpFramePath: str, duration: float) -> bool:
+    try:
+        middle_time = duration / 2
+        time_str = f"{int(middle_time // 3600):02}:{int((middle_time % 3600) // 60):02}:{int(middle_time % 60):02}"
+        ffmpeg.input(file, ss=time_str).output(tmpFramePath, vframes=1, pix_fmt='yuv420p', format='image2', update='1').run()
+        return True
+    except Exception as e:
+        print(f"error extracting audio: {e}")
+    return False
+
+
 def extract_chunk_number(item):
     match = re.search(r"_(\d+)\.wav$", item[0])
     return int(match.group(1)) if match else float("inf")
 
 
-def convert_to_wav(audioFilePath) -> str:
-    audio = AudioSegment.from_mp3(audioFilePath)
+def convert_to_wav(audioFilePath: str) -> str:
     wav_path = audioFilePath.replace(".mp3", ".wav")
-    audio.export(wav_path, format="wav", parameters=["-ac", "1", "-ar", "16000"])
+    ffmpeg.input(audioFilePath).output(wav_path, ac=1, ar=16000, y=None).run(quiet=True)
     return wav_path
 
 
